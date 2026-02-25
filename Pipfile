@@ -10,6 +10,8 @@ python-jose = {extras = ["cryptography"], version = "*"}
 passlib = {extras = ["bcrypt"], version = "*"}
 uvicorn = "*"
 python-multipart = "*"
+bcrypt = "*"
+email-validator = "*"
 
 [dev-packages]
 
