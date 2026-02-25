@@ -39,7 +39,7 @@ class UserLogin(BaseModel):
 
 @app.post("/users/create")
 async def create_user(user: UserCreate, session: Session = Depends(get_session)):
-    existing = session.query(User).filter(User.username == user.username).first()
+    existing = session.exec(select(User).where(User.username == user.username)).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists"
@@ -58,12 +58,12 @@ async def login_user(
     session: Session = Depends(get_session),
 ):
     # get user
-    statement = select(User).where(User.username == user.username)
+    statement = select(User).where(User.username == form_data.username)
     user = session.exec(statement).first()
 
     # verify credentials
     if not user or not verify_password(form_data.password, user.password):
-        raise HTTPEXception(
+        raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
         )
@@ -103,7 +103,7 @@ async def create_room(room: RoomCreate, session: Session = Depends(get_session))
 
 @app.delete("/rooms/{room_id}")
 async def delete_room(room_id: int, session: Session = Depends(get_session)):
-    room = session.query(Room).filter(Room.id == room_id).first()
+    room = session.get(Room, room_id)
     if not room:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
@@ -115,18 +115,17 @@ async def delete_room(room_id: int, session: Session = Depends(get_session)):
 
 @app.get("/rooms/{room_id}")
 async def get_room(room_id: int, session: Session = Depends(get_session)):
-    room = session.query(Room).filter(Room.id == room_id).first()
+    room = session.get(Room, room_id)
     if not room:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
-    session.refresh(room)
     return room
 
 
 @app.get("/rooms")
 async def get_rooms(session: Session = Depends(get_session)):
-    rooms = session.query(Room).order_by(Room.name).all()
+    rooms = session.exec(select(Room).order_by(Room.name)).all()
     return rooms
 
 
@@ -134,12 +133,12 @@ async def get_rooms(session: Session = Depends(get_session)):
 async def join_room(
     room_id: int, user_id: int, session: Session = Depends(get_session)
 ):
-    room = session.query(Room).filter(Room.id == room_id).first()
+    room = session.get(Room, room_id)
     if not room:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
-    user = session.query(User).filter(User.id == user_id).first()
+    user = session.get(User, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
@@ -154,12 +153,12 @@ async def join_room(
 async def leave_room(
     room_id: int, user_id: int, session: Session = Depends(get_session)
 ):
-    room = session.query(Room).filter(Room.id == room_id).first()
+    room = session.get(Room, room_id)
     if not room:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
-    user = session.query(User).filter(User.id == user_id).first()
+    user = session.get(User, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
@@ -172,14 +171,12 @@ async def leave_room(
 
 @app.get("/rooms/{room_id}/users")
 async def get_room_users(room_id: int, session: Session = Depends(get_session)):
-    room = session.query(Room).filter(Room.id == room_id).first()
+    room = session.get(Room, room_id)
     if not room:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
-    users = room.users
-    session.refresh(users)
-    return users
+    return room.users
 
 
 #
@@ -189,19 +186,19 @@ async def get_room_users(room_id: int, session: Session = Depends(get_session)):
 
 class MessageCreate(BaseModel):
     room_id: int
-    text: str
+    content: str
 
 
 @app.post("/messages/create")
 async def create_message(
     message: MessageCreate, session: Session = Depends(get_session)
 ):
-    room = session.query(Room).filter(Room.id == message.room_id).first()
+    room = session.get(Room, message.room_id)
     if not room:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
-    db_message = Message(text=message.text, room=room)
+    db_message = Message(content=message.content, room_id=message.room_id)
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
@@ -210,15 +207,14 @@ async def create_message(
 
 @app.delete("/messages/{message_id}")
 async def delete_message(message_id: int, session: Session = Depends(get_session)):
-    message = session.query(Message).filter(Message.id == message_id).first()
+    message = session.get(Message, message_id)
     if not message:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Message not found"
         )
     session.delete(message)
     session.commit()
-    session.refresh(message)
-    return message
+    return {"ok": True, "deleted_id": message_id}
 
 
 if __name__ == "__main__":
