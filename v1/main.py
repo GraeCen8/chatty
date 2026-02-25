@@ -102,3 +102,125 @@ async def login_user(
 @app.get("/users/me", response_model=UserRead)
 async def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+#
+# rooms
+#
+
+
+class RoomCreate(BaseModel):
+    name: str
+
+
+@app.post("/rooms/create", response_model=RoomRead)
+async def create_room(
+    room: RoomCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    expression = select(Room).where(Room.name == room.name)
+    existing = session.exec(expression).first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Room name already exists"
+        )
+
+    db_room = Room(name=room.name)
+    session.add(db_room)
+    session.commit()
+    session.refresh(db_room)
+    return db_room
+
+
+@app.delete("/rooms/{room_id}")
+async def delete_room(
+    room_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    room = session.get(Room, room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    session.delete(room)
+    session.commit()
+    return {"ok": True}
+
+
+@app.get("/rooms/{room_id}", response_model=RoomRead)
+async def get_room(
+    room_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    room = session.get(Room, room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    return room
+
+
+@app.get("/rooms", response_model=List[RoomRead])
+async def get_rooms(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    rooms = session.exec(select(Room).order_by(Room.name)).all()
+    return rooms
+
+
+@app.post("/rooms/{room_id}/join")
+async def join_room(
+    room_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    room = session.get(Room, room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    if current_user in room.users:
+        return room
+    room.users.append(current_user)
+    session.add(room)
+    session.commit()
+    session.refresh(room)
+    return room
+
+
+@app.delete("/rooms/{room_id}/leave")
+async def leave_room(
+    room_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    room = session.get(Room, room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    if current_user not in room.users:
+        return room
+    room.users.remove(current_user)
+    session.add(room)
+    session.commit()
+    session.refresh(room)
+    return room
+
+
+@app.get("/rooms/{room_id}/users", response_model=List[UserRead])
+async def get_room_users(
+    room_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    room = session.get(Room, room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    return room.users
