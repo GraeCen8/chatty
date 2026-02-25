@@ -224,3 +224,72 @@ async def get_room_users(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
     return room.users
+
+
+#
+# messages
+#
+
+
+class MessageCreate(BaseModel):
+    room_id: int
+    content: str
+
+
+@app.post("/messages/create", response_model=MessageRead)
+async def create_message(
+    message: MessageCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    room = session.get(Room, message.room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    db_message = Message(
+        content=message.content, room=room, sender=current_user
+    )
+    session.add(db_message)
+    session.commit()
+    session.refresh(db_message)
+    return db_message
+
+
+@app.delete("/messages/{message_id}")
+async def delete_message(
+    message_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    message = session.get(Message, message_id)
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Message not found"
+        )
+    if message.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only delete your own messages",
+        )
+    session.delete(message)
+    session.commit()
+    return {"ok": True, "deleted_id": message_id}
+
+
+@app.get("/rooms/{room_id}/messages", response_model=List[MessageRead])
+async def get_room_messages(
+    room_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    room = session.get(Room, room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    return room.messages
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
