@@ -6,9 +6,10 @@ name = "pypi"
 [packages]
 fastapi = "*"
 sqlmodel = "*"
-jose = "*"
-passlib = "*"
+python-jose = {extras = ["cryptography"], version = "*"}
+passlib = {extras = ["bcrypt"], version = "*"}
 uvicorn = "*"
+python-multipart = "*"
 
 [dev-packages]
 
