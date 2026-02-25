@@ -5,8 +5,10 @@ name = "pypi"
 
 [packages]
 fastapi = "*"
-uvicorn = "*"
 sqlmodel = "*"
+jose = "*"
+passlib = "*"
+uvicorn = "*"
 
 [dev-packages]
 
