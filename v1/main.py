@@ -73,3 +73,154 @@ async def login_user(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+#
+# rooms
+#
+
+
+class RoomCreate(BaseModel):
+    name: str
+
+
+@app.post("/rooms/create")
+async def create_room(room: RoomCreate, session: Session = Depends(get_session)):
+    expression = select(Room).where(Room.name == room.name)
+    existing = session.exec(expression).first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Room name already exists"
+        )
+
+    db_room = Room(
+        name=room.name,
+    )
+
+    session.add(db_room)
+    session.commit()
+    session.refresh(db_room)
+    return db_room
+
+
+@app.delete("/rooms/{room_id}")
+async def delete_room(room_id: int, session: Session = Depends(get_session)):
+    room = session.query(Room).filter(Room.id == room_id).first()
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    session.delete(room)
+    session.commit()
+    return room
+
+
+@app.get("/rooms/{room_id}")
+async def get_room(room_id: int, session: Session = Depends(get_session)):
+    room = session.query(Room).filter(Room.id == room_id).first()
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    session.refresh(room)
+    return room
+
+
+@app.get("/rooms")
+async def get_rooms(session: Session = Depends(get_session)):
+    rooms = session.query(Room).order_by(Room.name).all()
+    return rooms
+
+
+@app.post("/rooms/{room_id}/join/{user_id}")
+async def join_room(
+    room_id: int, user_id: int, session: Session = Depends(get_session)
+):
+    room = session.query(Room).filter(Room.id == room_id).first()
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    user = session.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+    room.users.append(user)
+    session.commit()
+    session.refresh(room)
+    return room
+
+
+@app.delete("/rooms/{room_id}/leave/{user_id}")
+async def leave_room(
+    room_id: int, user_id: int, session: Session = Depends(get_session)
+):
+    room = session.query(Room).filter(Room.id == room_id).first()
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    user = session.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+    room.users.remove(user)
+    session.commit()
+    session.refresh(room)
+    return room
+
+
+@app.get("/rooms/{room_id}/users")
+async def get_room_users(room_id: int, session: Session = Depends(get_session)):
+    room = session.query(Room).filter(Room.id == room_id).first()
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    users = room.users
+    session.refresh(users)
+    return users
+
+
+#
+# messages
+#
+
+
+class MessageCreate(BaseModel):
+    room_id: int
+    text: str
+
+
+@app.post("/messages/create")
+async def create_message(
+    message: MessageCreate, session: Session = Depends(get_session)
+):
+    room = session.query(Room).filter(Room.id == message.room_id).first()
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    db_message = Message(text=message.text, room=room)
+    session.add(db_message)
+    session.commit()
+    session.refresh(db_message)
+    return db_message
+
+
+@app.delete("/messages/{message_id}")
+async def delete_message(message_id: int, session: Session = Depends(get_session)):
+    message = session.query(Message).filter(Message.id == message_id).first()
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Message not found"
+        )
+    session.delete(message)
+    session.commit()
+    session.refresh(message)
+    return message
+
+
+if __name__ == "__main__":
+    create_tables()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
