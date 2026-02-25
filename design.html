@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat App Architecture</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #11111a;
+    --surface2: #1a1a28;
+    --border: #252540;
+    --accent: #6c63ff;
+    --accent2: #ff6584;
+    --accent3: #43e8b0;
+    --text: #e8e8f0;
+    --muted: #6b6b8a;
+    --code-bg: #0d0d18;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    line-height: 1.6;
+    padding: 40px 20px;
+    min-height: 100vh;
+  }
+
+  .noise {
+    position: fixed; inset: 0; pointer-events: none; opacity: 0.03; z-index: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; position: relative; z-index: 1; }
+
+  header { margin-bottom: 60px; border-left: 3px solid var(--accent); padding-left: 24px; }
+  header .tag { font-family: 'JetBrains Mono', monospace; color: var(--accent); font-size: 12px; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 12px; }
+  header h1 { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 800; line-height: 1.1; }
+  header h1 span { color: var(--accent); }
+  header p { color: var(--muted); margin-top: 12px; font-size: 16px; }
+
+  .section { margin-bottom: 60px; }
+  .section-title {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 4px;
+    text-transform: uppercase; color: var(--accent3); margin-bottom: 24px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* Architecture diagram */
+  .arch-diagram {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 32px; display: grid; gap: 20px;
+  }
+
+  .arch-row { display: flex; gap: 16px; align-items: stretch; justify-content: center; flex-wrap: wrap; }
+
+  .arch-box {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; flex: 1; min-width: 140px; max-width: 200px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    transition: border-color 0.2s, transform 0.2s;
+    cursor: default;
+  }
+  .arch-box:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .arch-box .icon { font-size: 24px; }
+  .arch-box .label { font-size: 13px; font-weight: 600; text-align: center; }
+  .arch-box .sub { font-size: 11px; color: var(--muted); text-align: center; font-family: 'JetBrains Mono', monospace; }
+
+  .arch-box.client { border-color: #3a3a5c; }
+  .arch-box.server { border-color: #6c63ff44; }
+  .arch-box.db { border-color: #43e8b044; }
+  .arch-box.pg { border-color: #43e8b066; }
+
+  .arch-arrow {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 20px; flex-shrink: 0;
+  }
+
+  .arrow-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); text-align: center; margin-top: 4px; }
+
+  /* SQL Schema */
+  .schema-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+
+  .table-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden;
+  }
+  .table-header {
+    background: var(--surface2); padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .table-name { font-weight: 700; font-size: 14px; }
+  .table-badge {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 2px 8px;
+    border-radius: 4px; background: var(--accent); color: white;
+  }
+
+  .table-body { padding: 0; }
+  .col-row {
+    display: flex; align-items: center; padding: 8px 16px;
+    border-bottom: 1px solid var(--border); gap: 10px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  }
+  .col-row:last-child { border-bottom: none; }
+  .col-key { color: var(--accent2); font-size: 10px; flex-shrink: 0; width: 28px; }
+  .col-name { flex: 1; color: var(--text); }
+  .col-type { color: var(--accent3); font-size: 11px; }
+  .col-desc { color: var(--muted); font-size: 10px; margin-left: auto; }
+
+  /* API specs */
+  .api-section { display: flex; flex-direction: column; gap: 12px; }
+
+  .endpoint {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; cursor: pointer;
+  }
+  .endpoint-header {
+    display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+    transition: background 0.15s;
+  }
+  .endpoint-header:hover { background: var(--surface2); }
+
+  .method {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
+    padding: 3px 8px; border-radius: 4px; min-width: 56px; text-align: center;
+    flex-shrink: 0;
+  }
+  .method.get { background: #1a3a2a; color: #43e8b0; }
+  .method.post { background: #2a2a4a; color: #6c63ff; }
+  .method.delete { background: #3a1a1a; color: #ff6584; }
+  .method.ws { background: #2a1a3a; color: #c084fc; }
+
+  .endpoint-path { font-family: 'JetBrains Mono', monospace; font-size: 13px; flex: 1; }
+  .endpoint-desc { color: var(--muted); font-size: 12px; }
+
+  .endpoint-body {
+    display: none; border-top: 1px solid var(--border);
+    padding: 16px 18px; background: var(--code-bg);
+  }
+  .endpoint.open .endpoint-body { display: block; }
+  .endpoint.open .endpoint-header { background: var(--surface2); }
+
+  pre {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.7;
+    white-space: pre-wrap; color: var(--text); overflow-x: auto;
+  }
+  .pre-label { font-size: 10px; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; font-family: 'JetBrains Mono', monospace; }
+  .key { color: #7dd3fc; }
+  .str { color: #86efac; }
+  .num { color: #fcd34d; }
+  .bool { color: #f9a8d4; }
+  .comment { color: #4a4a6a; }
+
+  /* WS Events */
+  .ws-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .ws-grid { grid-template-columns: 1fr; } }
+
+  .ws-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden;
+  }
+  .ws-card-header {
+    padding: 10px 14px; background: var(--surface2); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600;
+  }
+  .ws-direction {
+    font-size: 10px; font-family: 'JetBrains Mono', monospace; padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .ws-direction.server { background: #2a3a2a; color: var(--accent3); }
+  .ws-direction.client { background: #2a2a4a; color: var(--accent); }
+  .ws-card pre { padding: 12px 14px; font-size: 11px; }
+
+  /* Flow */
+  .flow-steps { display: flex; flex-direction: column; gap: 0; }
+  .flow-step {
+    display: flex; gap: 20px; padding: 16px 0;
+    border-left: 2px solid var(--border); margin-left: 16px; padding-left: 24px;
+    position: relative;
+  }
+  .flow-step::before {
+    content: ''; position: absolute; left: -6px; top: 24px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--surface2); border: 2px solid var(--accent);
+  }
+  .flow-step:last-child { border-left: 2px solid transparent; }
+  .flow-step-num {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--accent);
+    flex-shrink: 0; padding-top: 2px; width: 20px;
+  }
+  .flow-step-content {}
+  .flow-step-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .flow-step-desc { font-size: 13px; color: var(--muted); }
+  .flow-code { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--accent3); margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="noise"></div>
+<div class="container">
+
+  <header>
+    <div class="tag">System Design</div>
+    <h1>Chat App <span>Architecture</span></h1>
+    <p>PostgreSQL-only · WebSocket · REST API — Full specification document</p>
+  </header>
+
+  <!-- System Overview -->
+  <div class="section">
+    <div class="section-title">01 — System Overview</div>
+    <div class="arch-diagram">
+      <div class="arch-row">
+        <div class="arch-box client"><div class="icon">🖥️</div><div class="label">Web / Mobile Client</div><div class="sub">React / Native</div></div>
+        <div class="arch-arrow" style="flex-direction:column;">
+          <div>⇅</div>
+          <div class="arrow-label">REST + WebSocket<br>HTTP / ws://</div>
+        </div>
+        <div class="arch-box server"><div class="icon">⚙️</div><div class="label">API + WS Server</div><div class="sub">Node / Go / Python</div></div>
+        <div class="arch-arrow" style="flex-direction:column;">
+          <div>⇅</div>
+          <div class="arrow-label">SQL +<br>LISTEN/NOTIFY</div>
+        </div>
+        <div class="arch-box pg"><div class="icon">🐘</div><div class="label">PostgreSQL</div><div class="sub">Data · Sessions · Pub/Sub · Presence</div></div>
+      </div>
+      <div style="margin-top:16px;padding:14px 18px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+        <div><span style="color:var(--accent3)">messages</span> — persisted chat data</div>
+        <div><span style="color:var(--accent3)">sessions</span> — JWT / auth tokens</div>
+        <div><span style="color:var(--accent3)">users.status</span> — presence (online/away/offline)</div>
+        <div><span style="color:var(--accent3)">LISTEN/NOTIFY</span> — WS broadcast pub/sub</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SQL Schema -->
+  <div class="section">
+    <div class="section-title">02 — SQL Database Schema</div>
+    <div class="schema-grid">
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-name">users</div>
+          <div class="table-badge">TABLE</div>
+        </div>
+        <div class="table-body">
+          <div class="col-row"><span class="col-key">🔑 PK</span><span class="col-name">id</span><span class="col-type">UUID</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">username</span><span class="col-type">VARCHAR(50)</span><span class="col-desc">UNIQUE</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">email</span><span class="col-type">VARCHAR(255)</span><span class="col-desc">UNIQUE</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">password_hash</span><span class="col-type">TEXT</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">avatar_url</span><span class="col-type">TEXT</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">status</span><span class="col-type">ENUM</span><span class="col-desc">online/offline/away</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">last_seen_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-name">rooms</div>
+          <div class="table-badge">TABLE</div>
+        </div>
+        <div class="table-body">
+          <div class="col-row"><span class="col-key">🔑 PK</span><span class="col-name">id</span><span class="col-type">UUID</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">name</span><span class="col-type">VARCHAR(100)</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">type</span><span class="col-type">ENUM</span><span class="col-desc">direct/group</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">description</span><span class="col-type">TEXT</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">created_by</span><span class="col-type">UUID</span><span class="col-desc">→ users.id</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">is_private</span><span class="col-type">BOOLEAN</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-name">room_members</div>
+          <div class="table-badge">TABLE</div>
+        </div>
+        <div class="table-body">
+          <div class="col-row"><span class="col-key">🔑 PK</span><span class="col-name">id</span><span class="col-type">UUID</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">room_id</span><span class="col-type">UUID</span><span class="col-desc">→ rooms.id</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">user_id</span><span class="col-type">UUID</span><span class="col-desc">→ users.id</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">role</span><span class="col-type">ENUM</span><span class="col-desc">admin/member</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">joined_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">last_read_at</span><span class="col-type">TIMESTAMPTZ</span><span class="col-desc">for unread count</span></div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-name">messages</div>
+          <div class="table-badge">TABLE</div>
+        </div>
+        <div class="table-body">
+          <div class="col-row"><span class="col-key">🔑 PK</span><span class="col-name">id</span><span class="col-type">UUID</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">room_id</span><span class="col-type">UUID</span><span class="col-desc">→ rooms.id</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">sender_id</span><span class="col-type">UUID</span><span class="col-desc">→ users.id</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">reply_to_id</span><span class="col-type">UUID</span><span class="col-desc">→ messages.id</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">content</span><span class="col-type">TEXT</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">type</span><span class="col-type">ENUM</span><span class="col-desc">text/image/file</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">is_edited</span><span class="col-type">BOOLEAN</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">is_deleted</span><span class="col-type">BOOLEAN</span><span class="col-desc">soft delete</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">updated_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-name">attachments</div>
+          <div class="table-badge">TABLE</div>
+        </div>
+        <div class="table-body">
+          <div class="col-row"><span class="col-key">🔑 PK</span><span class="col-name">id</span><span class="col-type">UUID</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">message_id</span><span class="col-type">UUID</span><span class="col-desc">→ messages.id</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">file_url</span><span class="col-type">TEXT</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">file_name</span><span class="col-type">VARCHAR(255)</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">file_size</span><span class="col-type">BIGINT</span><span class="col-desc">bytes</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">mime_type</span><span class="col-type">VARCHAR(100)</span></div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-name">reactions</div>
+          <div class="table-badge">TABLE</div>
+        </div>
+        <div class="table-body">
+          <div class="col-row"><span class="col-key">🔑 PK</span><span class="col-name">id</span><span class="col-name">UUID</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">message_id</span><span class="col-type">UUID</span><span class="col-desc">→ messages.id</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">user_id</span><span class="col-type">UUID</span><span class="col-desc">→ users.id</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">emoji</span><span class="col-type">VARCHAR(10)</span><span class="col-desc">UNIQUE(msg,user,emoji)</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-name">sessions</div>
+          <div class="table-badge">TABLE</div>
+        </div>
+        <div class="table-body">
+          <div class="col-row"><span class="col-key">🔑 PK</span><span class="col-name">id</span><span class="col-type">UUID</span></div>
+          <div class="col-row"><span class="col-key">FK</span><span class="col-name">user_id</span><span class="col-type">UUID</span><span class="col-desc">→ users.id</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">token_hash</span><span class="col-type">TEXT</span><span class="col-desc">SHA-256 of JWT</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">expires_at</span><span class="col-type">TIMESTAMPTZ</span><span class="col-desc">checked on every req</span></div>
+          <div class="col-row"><span class="col-key"></span><span class="col-name">revoked</span><span class="col-type">BOOLEAN</span><span class="col-desc">for logout / invalidation</span></div>
+        </div>
+      </div>
+
+    </div>
+  <div class="section">
+    <div class="section-title">03 — REST API Specification</div>
+    <div class="api-section">
+
+      <!-- Auth -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:2px;margin-bottom:8px;text-transform:uppercase;">Authentication</div>
+
+      <div class="endpoint" onclick="this.classList.toggle('open')">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="endpoint-path">/api/auth/register</span>
+          <span class="endpoint-desc">Create a new account</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="pre-label">Request Body</div>
+          <pre>
+{
+  <span class="key">"username"</span>: <span class="str">"john_doe"</span>,
+  <span class="key">"email"</span>:    <span class="str">"<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="ff95909791bf9a879e928f939ad19c9092">[email&#160;protected]</a>"</span>,
+  <span class="key">"password"</span>: <span class="str">"securepassword"</span>
+}
+          </pre>
+          <div class="pre-label" style="margin-top:12px">Response 201</div>
+          <pre>
+{
+  <span class="key">"user"</span>: {
+    <span class="key">"id"</span>:       <span class="str">"uuid-..."</span>,
+    <span class="key">"username"</span>: <span class="str">"john_doe"</span>,
+    <span class="key">"email"</span>:    <span class="str">"<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="63090c0b0d23061b020e130f064d000c0e">[email&#160;protected]</a>"</span>
+  },
+  <span class="key">"token"</span>: <span class="str">"jwt.token.here"</span>
+}
+          </pre>
+        </div>
+      </div>
+
+      <div class="endpoint" onclick="this.classList.toggle('open')">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="endpoint-path">/api/auth/login</span>
+          <span class="endpoint-desc">Authenticate, receive JWT</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="pre-label">Request Body</div>
+          <pre>{ <span class="key">"email"</span>: <span class="str">"<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="95fffafdfbd5f0edf4f8e5f9f0bbf6faf8">[email&#160;protected]</a>"</span>, <span class="key">"password"</span>: <span class="str">"securepassword"</span> }</pre>
+          <div class="pre-label" style="margin-top:12px">Response 200</div>
+          <pre>{ <span class="key">"token"</span>: <span class="str">"jwt..."</span>, <span class="key">"expires_in"</span>: <span class="num">86400</span> }</pre>
+        </div>
+      </div>
+
+      <div class="endpoint" onclick="this.classList.toggle('open')">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="endpoint-path">/api/auth/logout</span>
+          <span class="endpoint-desc">Revoke session token</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="pre-label">Headers</div>
+          <pre>Authorization: Bearer &lt;token&gt;</pre>
+          <div class="pre-label" style="margin-top:12px">Response 200</div>
+          <pre>{ <span class="key">"ok"</span>: <span class="bool">true</span> }
+<span class="comment">// Sets sessions.revoked = true in PostgreSQL</span></pre>
+        </div>
+      </div>
+
+      <!-- Rooms -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:2px;margin:16px 0 8px;text-transform:uppercase;">Rooms</div>
+
+      <div class="endpoint" onclick="this.classList.toggle('open')">
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="endpoint-path">/api/rooms</span>
+          <span class="endpoint-desc">List all rooms for current user</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="pre-label">Headers</div>
+          <pre>Authorization: Bearer &lt;token&gt;</pre>
+          <div class="pre-label" style="margin-top:12px">Response 200</div>
+          <pre>
+{
+  <span class="key">"rooms"</span>: [
+    {
+      <span class="key">"id"</span>:            <span class="str">"uuid"</span>,
+      <span class="key">"name"</span>:          <span class="str">"general"</span>,
+      <span class="key">"type"</span>:          <span class="str">"group"</span>,
+      <span class="key">"unread_count"</span>:  <span class="num">3</span>,
+      <span class="key">"last_message"</span>:  { <span class="key">"content"</span>: <span class="str">"Hey!"</span>, <span class="key">"sender"</span>: <span class="str">"alice"</span> }
+    }
+  ]
+}
+          </pre>
+        </div>
+      </div>
+
+      <div class="endpoint" onclick="this.classList.toggle('open')">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="endpoint-path">/api/rooms</span>
+          <span class="endpoint-desc">Create a new room</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="pre-label">Request Body</div>
+          <pre>
+{
+  <span class="key">"name"</span>:        <span class="str">"team-backend"</span>,
+  <span class="key">"type"</span>:        <span class="str">"group"</span>,
+  <span class="key">"is_private"</span>:  <span class="bool">false</span>,
+  <span class="key">"member_ids"</span>:  [<span class="str">"uuid-alice"</span>, <span class="str">"uuid-bob"</span>]
+}
+          </pre>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:2px;margin:16px 0 8px;text-transform:uppercase;">Messages</div>
+
+      <div class="endpoint" onclick="this.classList.toggle('open')">
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="endpoint-path">/api/rooms/:roomId/messages</span>
+          <span class="endpoint-desc">Paginated message history</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="pre-label">Query Params</div>
+          <pre>?limit=50&amp;before=&lt;message_id&gt;   <span class="comment">// cursor pagination</span></pre>
+          <div class="pre-label" style="margin-top:12px">Response 200</div>
+          <pre>
+{
+  <span class="key">"messages"</span>: [
+    {
+      <span class="key">"id"</span>:          <span class="str">"uuid"</span>,
+      <span class="key">"content"</span>:     <span class="str">"Hello world"</span>,
+      <span class="key">"sender"</span>:      { <span class="key">"id"</span>: <span class="str">"uuid"</span>, <span class="key">"username"</span>: <span class="str">"alice"</span> },
+      <span class="key">"created_at"</span>:  <span class="str">"2026-01-01T12:00:00Z"</span>,
+      <span class="key">"reactions"</span>:   [{ <span class="key">"emoji"</span>: <span class="str">"👍"</span>, <span class="key">"count"</span>: <span class="num">2</span> }]
+    }
+  ],
+  <span class="key">"has_more"</span>: <span class="bool">true</span>
+}
+          </pre>
+        </div>
+      </div>
+
+      <div class="endpoint" onclick="this.classList.toggle('open')">
+        <div class="endpoint-header">
+          <span class="method delete">DELETE</span>
+          <span class="endpoint-path">/api/messages/:messageId</span>
+          <span class="endpoint-desc">Soft-delete a message</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="pre-label">Response 200</div>
+          <pre>
+{ <span class="key">"message"</span>: { <span class="key">"id"</span>: <span class="str">"uuid"</span>, <span class="key">"is_deleted"</span>: <span class="bool">true</span> } }
+          </pre>
+          <div class="pre-label" style="margin-top:12px">Note</div>
+          <pre><span class="comment">// Sets is_deleted=true. Content replaced with "Message deleted"
+// on client side. WS event "message.deleted" is broadcast.</span></pre>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- WebSocket API -->
+  <div class="section">
+    <div class="section-title">04 — WebSocket Event Specification</div>
+
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:16px;">
+      <div class="pre-label">Connection</div>
+      <pre>ws://api.example.com/ws?token=&lt;jwt&gt;
+<span class="comment">// On handshake: server looks up token_hash in sessions table.
+// Rejects with 401 if not found, revoked, or expired.
+// On connect: UPDATE users SET status='online', last_seen_at=NOW()
+// On disconnect: UPDATE users SET status='offline', last_seen_at=NOW()
+// All events are JSON. Format: { "event": "event.name", "data": { ... } }</span></pre>
+    </div>
+
+    <div class="ws-grid">
+
+      <div class="ws-card">
+        <div class="ws-card-header">
+          <span class="ws-direction client">CLIENT → SERVER</span>
+          message.send
+        </div>
+        <pre>
+{
+  <span class="key">"event"</span>: <span class="str">"message.send"</span>,
+  <span class="key">"data"</span>: {
+    <span class="key">"room_id"</span>:    <span class="str">"uuid"</span>,
+    <span class="key">"content"</span>:    <span class="str">"Hello!"</span>,
+    <span class="key">"reply_to_id"</span>: <span class="bool">null</span>
+  }
+}</pre>
+      </div>
+
+      <div class="ws-card">
+        <div class="ws-card-header">
+          <span class="ws-direction server">SERVER → CLIENT</span>
+          message.new
+        </div>
+        <pre>
+{
+  <span class="key">"event"</span>: <span class="str">"message.new"</span>,
+  <span class="key">"data"</span>: {
+    <span class="key">"id"</span>:         <span class="str">"uuid"</span>,
+    <span class="key">"room_id"</span>:    <span class="str">"uuid"</span>,
+    <span class="key">"content"</span>:    <span class="str">"Hello!"</span>,
+    <span class="key">"sender"</span>:     { <span class="key">"id"</span>: <span class="str">"..."</span>, <span class="key">"username"</span>: <span class="str">"alice"</span> },
+    <span class="key">"created_at"</span>: <span class="str">"ISO8601"</span>
+  }
+}</pre>
+      </div>
+
+      <div class="ws-card">
+        <div class="ws-card-header">
+          <span class="ws-direction client">CLIENT → SERVER</span>
+          typing.start / typing.stop
+        </div>
+        <pre>
+{
+  <span class="key">"event"</span>: <span class="str">"typing.start"</span>,
+  <span class="key">"data"</span>: { <span class="key">"room_id"</span>: <span class="str">"uuid"</span> }
+}
+<span class="comment">// Server broadcasts typing.indicator to room members</span></pre>
+      </div>
+
+      <div class="ws-card">
+        <div class="ws-card-header">
+          <span class="ws-direction server">SERVER → CLIENT</span>
+          typing.indicator
+        </div>
+        <pre>
+{
+  <span class="key">"event"</span>: <span class="str">"typing.indicator"</span>,
+  <span class="key">"data"</span>: {
+    <span class="key">"room_id"</span>: <span class="str">"uuid"</span>,
+    <span class="key">"user"</span>:    { <span class="key">"id"</span>: <span class="str">"..."</span>, <span class="key">"username"</span>: <span class="str">"bob"</span> },
+    <span class="key">"typing"</span>:  <span class="bool">true</span>
+  }
+}</pre>
+      </div>
+
+      <div class="ws-card">
+        <div class="ws-card-header">
+          <span class="ws-direction client">CLIENT → SERVER</span>
+          room.join
+        </div>
+        <pre>
+{
+  <span class="key">"event"</span>: <span class="str">"room.join"</span>,
+  <span class="key">"data"</span>: { <span class="key">"room_id"</span>: <span class="str">"uuid"</span> }
+}
+<span class="comment">// Subscribes to room events</span></pre>
+      </div>
+
+      <div class="ws-card">
+        <div class="ws-card-header">
+          <span class="ws-direction server">SERVER → CLIENT</span>
+          presence.update
+        </div>
+        <pre>
+{
+  <span class="key">"event"</span>: <span class="str">"presence.update"</span>,
+  <span class="key">"data"</span>: {
+    <span class="key">"user_id"</span>: <span class="str">"uuid"</span>,
+    <span class="key">"status"</span>:  <span class="str">"online"</span>
+  }
+}
+<span class="comment">// Broadcast when user connects/disconnects</span></pre>
+      </div>
+
+      <div class="ws-card">
+        <div class="ws-card-header">
+          <span class="ws-direction client">CLIENT → SERVER</span>
+          message.react
+        </div>
+        <pre>
+{
+  <span class="key">"event"</span>: <span class="str">"message.react"</span>,
+  <span class="key">"data"</span>: {
+    <span class="key">"message_id"</span>: <span class="str">"uuid"</span>,
+    <span class="key">"emoji"</span>:      <span class="str">"👍"</span>
+  }
+}</pre>
+      </div>
+
+      <div class="ws-card">
+        <div class="ws-card-header">
+          <span class="ws-direction server">SERVER → CLIENT</span>
+          message.deleted / message.edited
+        </div>
+        <pre>
+{
+  <span class="key">"event"</span>: <span class="str">"message.deleted"</span>,
+  <span class="key">"data"</span>: {
+    <span class="key">"message_id"</span>: <span class="str">"uuid"</span>,
+    <span class="key">"room_id"</span>:    <span class="str">"uuid"</span>
+  }
+}</pre>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Message Send Flow -->
+  <div class="section">
+    <div class="section-title">05 — Message Send Flow</div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;">
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="flow-step-num">01</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">Client sends WS event</div>
+            <div class="flow-step-desc">User types a message and hits send. Client emits <code style="color:var(--accent3)">message.send</code> over WebSocket.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">02</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">Server validates & persists</div>
+            <div class="flow-step-desc">Server authenticates the WS connection (JWT), validates the payload, and inserts a row into <code style="color:var(--accent3)">messages</code>.</div>
+            <div class="flow-code">INSERT INTO messages (id, room_id, sender_id, content, ...) VALUES (...)</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">03</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">PostgreSQL fires NOTIFY</div>
+            <div class="flow-step-desc">After insert, the server (or a trigger) calls <code style="color:var(--accent3)">NOTIFY room_&lt;uuid&gt;</code> with the message payload as JSON. All server processes listening on that channel receive it instantly.</div>
+            <div class="flow-code">NOTIFY room_uuid, '{"event":"message.new","data":{...}}'</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">04</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">Server pushes to WebSocket clients</div>
+            <div class="flow-step-desc">Each server process receives the NOTIFY and pushes <code style="color:var(--accent3)">message.new</code> over WebSocket to all connected clients in that room. No Redis needed — Postgres does the fan-out.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">05</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">Offline users get unread badge</div>
+            <div class="flow-step-desc">For members not connected, <code style="color:var(--accent3)">room_members.last_read_at</code> is compared to <code style="color:var(--accent3)">messages.created_at</code> to compute unread counts on next login.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">06</div>
+          <div class="flow-step-content">
+            <div class="flow-step-title">Clie
