@@ -12,6 +12,7 @@ uvicorn = "*"
 python-multipart = "*"
 bcrypt = "*"
 email-validator = "*"
+pydantic = {extras = ["email"], version = "*"}
 
 [dev-packages]
 

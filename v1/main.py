@@ -63,7 +63,9 @@ async def get_current_user(
 @app.post("/users/create", response_model=UserRead)
 async def create_user(user: UserCreate, session: Session = Depends(get_session)):
     existing = session.exec(
-        select(User).where((User.username == user.username) | (User.email == user.email))
+        select(User).where(
+            (User.username == user.username) | (User.email == user.email)
+        )
     ).first()
     if existing:
         raise HTTPException(
@@ -247,9 +249,7 @@ async def create_message(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
-    db_message = Message(
-        content=message.content, room=room, sender=current_user
-    )
+    db_message = Message(content=message.content, room=room, sender=current_user)
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
@@ -289,6 +289,11 @@ async def get_room_messages(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
     return room.messages
+
+
+#
+# run the app
+#
 
 
 if __name__ == "__main__":
