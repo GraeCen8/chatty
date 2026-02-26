@@ -19,6 +19,18 @@ import json
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
+    # Create a default room if none exists
+    from database import get_session
+    session_gen = get_session()
+    session = next(session_gen)
+    try:
+        existing = session.exec(select(Room)).first()
+        if not existing:
+            general = Room(name="General")
+            session.add(general)
+            session.commit()
+    finally:
+        session.close()
     yield
 
 
