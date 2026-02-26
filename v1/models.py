@@ -73,6 +73,7 @@ class MessageRead(BaseModel):
     timestamp: datetime
     user_id: int
     room_id: int
+    sender: Optional[UserRead] = None
 
     class Config:
         from_attributes = True
