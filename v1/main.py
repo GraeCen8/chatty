@@ -12,6 +12,10 @@ from contextlib import asynccontextmanager
 from fastapi.security.oauth2 import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 
 
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import WebSocket, WebSocketDisconnect
+import json
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
@@ -19,6 +23,41 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            await connection.send_json(message)
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 #
 # user logins
@@ -253,6 +292,20 @@ async def create_message(
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
+    
+    # Broadcast the new message
+    message_data = {
+        "id": db_message.id,
+        "content": db_message.content,
+        "room_id": db_message.room_id,
+        "sender": {
+            "id": current_user.id,
+            "username": current_user.username
+        },
+        "timestamp": str(db_message.timestamp) if hasattr(db_message, 'timestamp') else None
+    }
+    await manager.broadcast({"type": "message", "data": message_data})
+    
     return db_message
 
 
