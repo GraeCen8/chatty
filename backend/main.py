@@ -14,13 +14,14 @@ from fastapi.security.oauth2 import OAuth2PasswordRequestForm, OAuth2PasswordBea
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import WebSocket, WebSocketDisconnect
-import json
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
     # Create a default room if none exists
     from database import get_session
+
     session_gen = get_session()
     session = next(session_gen)
     try:
@@ -44,6 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -59,6 +61,7 @@ class ConnectionManager:
         for connection in self.active_connections:
             await connection.send_json(message)
 
+
 manager = ConnectionManager()
 
 
@@ -67,52 +70,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
-#
-# user logins
-#
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="users/login")
-
-
-class UserCreate(BaseModel):
-    username: str
-    password: str
-    email: EmailStr
-
-
-async def get_current_user(
-    token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)
-):
-    payload = decode_token(token)
-    if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    username: str = payload.get("sub")
-    if username is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    user = session.exec(select(User).where(User.username == username)).first()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return user
-
-
-@app.post("/users/create", response_model=UserRead)
-async def create_user(user: UserCreate, session: Session = Depends(get_session)):
+            await async def create_user(user: UserCreate, session: Session = Depends(get_session)):
     existing = session.exec(
         select(User).where(
             (User.username == user.username) | (User.email == user.email)
@@ -304,20 +262,19 @@ async def create_message(
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
-    
+
     # Broadcast the new message
     message_data = {
         "id": db_message.id,
         "content": db_message.content,
         "room_id": db_message.room_id,
-        "sender": {
-            "id": current_user.id,
-            "username": current_user.username
-        },
-        "timestamp": str(db_message.timestamp) if hasattr(db_message, 'timestamp') else None
+        "sender": {"id": current_user.id, "username": current_user.username},
+        "timestamp": str(db_message.timestamp)
+        if hasattr(db_message, "timestamp")
+        else None,
     }
     await manager.broadcast({"type": "message", "data": message_data})
-    
+
     return db_message
 
 
