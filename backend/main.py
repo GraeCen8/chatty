@@ -65,30 +65,6 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    try:
-        while True:
-            await async def create_user(user: UserCreate, session: Session = Depends(get_session)):
-    existing = session.exec(
-        select(User).where(
-            (User.username == user.username) | (User.email == user.email)
-        )
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username or email already exists",
-        )
-    hashed_pw = hash_password(user.password)
-    db_user = User(username=user.username, password=hashed_pw, email=user.email)
-    session.add(db_user)
-    session.commit()
-    session.refresh(db_user)
-    return db_user
-
-
 @app.post("/users/login")
 async def login_user(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -108,6 +84,34 @@ async def login_user(
     # create token
     access_token = create_token({"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="users/login")
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)
+) -> User:
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    username: str = payload.get("sub")
+    if username is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = session.exec(select(User).where(User.username == username)).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+        )
+    return user
 
 
 @app.get("/users/me", response_model=UserRead)
@@ -247,6 +251,16 @@ class MessageCreate(BaseModel):
     content: str
 
 
+def format_message(db_message: Message):
+    return {
+        "id": db_message.id,
+        "content": db_message.content,
+        "room_id": db_message.room_id,
+        "sender": {"id": db_message.sender.id, "username": db_message.sender.username},
+        "timestamp": db_message.timestamp.isoformat() if db_message.timestamp else None,
+    }
+
+
 @app.post("/messages/create", response_model=MessageRead)
 async def create_message(
     message: MessageCreate,
@@ -263,19 +277,67 @@ async def create_message(
     session.commit()
     session.refresh(db_message)
 
-    # Broadcast the new message
-    message_data = {
-        "id": db_message.id,
-        "content": db_message.content,
-        "room_id": db_message.room_id,
-        "sender": {"id": current_user.id, "username": current_user.username},
-        "timestamp": str(db_message.timestamp)
-        if hasattr(db_message, "timestamp")
-        else None,
-    }
-    await manager.broadcast({"type": "message", "data": message_data})
+    # Broadcast via WebSocket as well
+    await manager.broadcast(
+        {"type": "message", "data": format_message(db_message)}
+    )
 
     return db_message
+
+
+@app.websocket("/ws")
+async def handle_messages(
+    websocket: WebSocket, 
+    token: Optional[str] = None
+):
+    # Auth for WebSocket (usually passed via query param)
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+        
+    payload = decode_token(token)
+    if not payload or not payload.get("sub"):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    # Use a fresh session for the WS loop
+    from database import get_session
+    session_gen = get_session()
+    session = next(session_gen)
+    
+    try:
+        username = payload.get("sub")
+        user = session.exec(select(User).where(User.username == username)).first()
+        if not user:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        await manager.connect(websocket)
+        try:
+            while True:
+                data = await websocket.receive_json()
+                
+                # Expected format: {"room_id": int, "content": str}
+                room_id = data.get("room_id")
+                content = data.get("content")
+                
+                if room_id and content:
+                    room = session.get(Room, room_id)
+                    if room:
+                        db_message = Message(content=content, room=room, sender=user)
+                        session.add(db_message)
+                        session.commit()
+                        session.refresh(db_message)
+                        
+                        # Broadcast message to everyone
+                        await manager.broadcast({
+                            "type": "message", 
+                            "data": format_message(db_message)
+                        })
+        except WebSocketDisconnect:
+            manager.disconnect(websocket)
+    finally:
+        session.close()
 
 
 @app.delete("/messages/{message_id}")
