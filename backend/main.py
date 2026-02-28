@@ -65,6 +65,30 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    email: EmailStr
+
+
+@app.post("/users/create", response_model=UserRead)
+async def create_user(user: UserCreate, session: Session = Depends(get_session)):
+    existing = session.exec(
+        select(User).where((User.username == user.username) | (User.email == user.email))
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username or email already exists",
+        )
+    hashed_pw = hash_password(user.password)
+    db_user = User(username=user.username, password=hashed_pw, email=user.email)
+    session.add(db_user)
+    session.commit()
+    session.refresh(db_user)
+    return db_user
+
+
 @app.post("/users/login")
 async def login_user(
     form_data: OAuth2PasswordRequestForm = Depends(),
