@@ -418,11 +418,13 @@
             </div>
 
             <form class="input-area" on:submit|preventDefault={sendMessage}>
-                <input
-                    type="text"
-                    bind:value={newMessage}
-                    placeholder="Type a message..."
-                />
+                <div class="input-wrapper">
+                    <input
+                        type="text"
+                        bind:value={newMessage}
+                        placeholder="Message #{selectedRoom.name}"
+                    />
+                </div>
                 <button type="submit" disabled={!newMessage.trim()}>Send</button
                 >
             </form>
@@ -496,7 +498,10 @@
         justify-content: space-between;
         color: white;
         cursor: pointer;
-        transition: all 0.2s;
+        transition:
+            transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+            background 0.2s,
+            border-color 0.2s;
         text-align: left;
     }
 
@@ -535,7 +540,18 @@
         padding: 1.5rem;
         display: flex;
         flex-direction: column;
-        gap: 1rem;
+        gap: 0.5rem;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+    }
+
+    .messages::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .messages::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
     }
 
     .message {
@@ -582,20 +598,37 @@
     }
 
     .input-area {
-        padding: 1.25rem;
-        background: rgba(26, 26, 40, 0.8);
+        padding: 1rem 1.5rem 1.5rem;
+        background: transparent;
         display: flex;
         gap: 0.75rem;
-        border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .input-wrapper {
+        flex: 1;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 0.75rem;
+        display: flex;
+        align-items: center;
+        padding: 0 1rem;
+        transition:
+            border-color 0.2s,
+            box-shadow 0.2s;
+    }
+
+    .input-wrapper:focus-within {
+        border-color: #6c63ff;
+        box-shadow: 0 0 0 2px rgba(108, 99, 255, 0.2);
     }
 
     input {
         flex: 1;
-        background: rgba(13, 13, 24, 0.8);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 0.8rem 1rem;
-        border-radius: 0.75rem;
+        background: transparent;
+        border: none;
+        padding: 0.8rem 0;
         color: white;
+        outline: none;
     }
 
     button[type="submit"] {
