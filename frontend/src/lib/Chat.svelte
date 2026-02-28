@@ -6,6 +6,8 @@
     let selectedRoom = null;
     let messages = [];
     let newMessage = "";
+    let newRoomName = "";
+    let addUserUsername = "";
     let ws;
     let error = "";
 
@@ -52,10 +54,13 @@
     function connectWebSocket() {
         if (ws) ws.close();
 
-        ws = new WebSocket(`ws://localhost:8000/ws?token=${$token}`);
+        ws = new WebSocket(
+            `ws://localhost:8000/ws/${selectedRoom.id}?token=${$token}`,
+        );
 
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
+            if (!selectedRoom) return;
             if (
                 msg.type === "message" &&
                 msg.data.room_id === selectedRoom.id
@@ -119,11 +124,79 @@
             if (!res.ok)
                 throw new Error("Failed to send message via REST fallback");
 
-            // Note: Since the backend broadcasts REST messages too,
-            // the WS listener will handle adding it to the list.
+            const created = await res.json();
+            if (!messages.find((m) => m.id === created.id)) {
+                messages = [...messages, created];
+                scrollToBottom();
+            }
         } catch (e) {
             error = `Send failed: ${e.message}`;
             newMessage = content; // restore draft
+        }
+    }
+
+    async function createRoom() {
+        if (!newRoomName.trim()) return;
+        try {
+            const res = await fetch("http://localhost:8000/rooms/create", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${$token}`,
+                },
+                body: JSON.stringify({ name: newRoomName }),
+            });
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.detail || "Failed to create room");
+            }
+            newRoomName = "";
+            await loadRooms();
+        } catch (e) {
+            error = e.message;
+        }
+    }
+
+    async function deleteRoom(roomId) {
+        if (!confirm("Are you sure you want to delete this room?")) return;
+        try {
+            const res = await fetch(`http://localhost:8000/rooms/${roomId}`, {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${$token}` },
+            });
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.detail || "Failed to delete room");
+            }
+            leaveRoom();
+            await loadRooms();
+        } catch (e) {
+            error = e.message;
+        }
+    }
+
+    async function addUserToRoom() {
+        if (!addUserUsername.trim()) return;
+        try {
+            const res = await fetch(
+                `http://localhost:8000/rooms/${selectedRoom.id}/add-user`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${$token}`,
+                    },
+                    body: JSON.stringify({ username: addUserUsername }),
+                },
+            );
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.detail || "Failed to add user");
+            }
+            alert(`User ${addUserUsername} added!`);
+            addUserUsername = "";
+        } catch (e) {
+            error = e.message;
         }
     }
 
@@ -134,10 +207,22 @@
         }, 50);
     }
 
+    function leaveRoom() {
+        selectedRoom = null;
+        messages = [];
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+    }
+
     function logout() {
         token.set(null);
         user.set(null);
-        if (ws) ws.close();
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
     }
 
     onDestroy(() => {
@@ -157,6 +242,15 @@
                 <p class="error">{error}</p>
             {/if}
 
+            <div class="create-room">
+                <input
+                    type="text"
+                    bind:value={newRoomName}
+                    placeholder="New room name..."
+                />
+                <button on:click={createRoom}>Create</button>
+            </div>
+
             <div class="room-list">
                 {#each rooms as room}
                     <button class="room-card" on:click={() => selectRoom(room)}>
@@ -168,20 +262,35 @@
                     </button>
                 {/each}
                 {#if rooms.length === 0}
-                    <p class="empty">
-                        No rooms available. Create one in the backend!
-                    </p>
+                    <p class="empty">No rooms available. Create one above!</p>
                 {/if}
             </div>
         </div>
     {:else}
         <div class="message-page">
             <header>
-                <button class="back-btn" on:click={() => (selectedRoom = null)}
-                    >←</button
-                >
+                <button class="back-btn" on:click={leaveRoom}>←</button>
                 <h2># {selectedRoom.name}</h2>
-                <div class="user-chip">{$user?.username || "User"}</div>
+                <div class="header-actions">
+                    <div class="add-user-form">
+                        <input
+                            type="text"
+                            bind:value={addUserUsername}
+                            placeholder="Username"
+                        />
+                        <button on:click={addUserToRoom}>Add Member</button>
+                    </div>
+                    {#if selectedRoom.owner_id === $user?.id}
+                        <button
+                            class="delete-btn"
+                            on:click={() => deleteRoom(selectedRoom.id)}
+                            title="Delete Room"
+                        >
+                            🗑️
+                        </button>
+                    {/if}
+                    <div class="user-chip">{$user?.username || "User"}</div>
+                </div>
             </header>
 
             <div class="messages">
@@ -409,5 +518,74 @@
         font-size: 0.8rem;
         font-weight: 600;
         border: 1px solid rgba(67, 232, 176, 0.2);
+    }
+
+    .create-room {
+        padding: 0 1.5rem 1rem;
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .create-room input {
+        flex: 1;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        color: white;
+    }
+
+    .create-room button {
+        background: #6c63ff;
+        color: white;
+        border: none;
+        padding: 0 1rem;
+        border-radius: 0.5rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .add-user-form {
+        display: flex;
+        gap: 0.25rem;
+    }
+
+    .add-user-form input {
+        width: 100px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.4rem;
+        color: white;
+        font-size: 0.8rem;
+    }
+
+    .add-user-form button {
+        background: rgba(108, 99, 255, 0.2);
+        color: #6c63ff;
+        border: 1px solid rgba(108, 99, 255, 0.3);
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.4rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+
+    .delete-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0.5rem;
+        border-radius: 0.5rem;
+        transition: background 0.2s;
+    }
+
+    .delete-btn:hover {
+        background: rgba(255, 0, 0, 0.1);
     }
 </style>

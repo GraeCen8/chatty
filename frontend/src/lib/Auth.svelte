@@ -40,12 +40,16 @@
             }
 
             if (isLogin) {
-                token.set(data.access_token);
+                const accessToken = data.access_token;
                 // Fetch user info
                 const userRes = await fetch('http://localhost:8000/users/me', {
-                    headers: { 'Authorization': `Bearer ${data.access_token}` }
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
                 });
                 const userData = await userRes.json();
+                if (!userRes.ok) {
+                    throw new Error(userData.detail || 'Failed to load user profile');
+                }
+                token.set(accessToken);
                 user.set(userData);
             } else {
                 isLogin = true;
