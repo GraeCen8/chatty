@@ -1,0 +1,413 @@
+<script>
+    import { onMount, onDestroy } from "svelte";
+    import { token, user } from "../stores";
+
+    let rooms = [];
+    let selectedRoom = null;
+    let messages = [];
+    let newMessage = "";
+    let ws;
+    let error = "";
+
+    $: if ($token && !selectedRoom) {
+        loadRooms();
+    }
+
+    async function loadRooms() {
+        try {
+            const res = await fetch("http://localhost:8000/rooms", {
+                headers: { Authorization: `Bearer ${$token}` },
+            });
+            if (!res.ok) throw new Error("Failed to load rooms");
+            rooms = await res.json();
+            // Backend in main.py line 173: return rooms (List[RoomRead])
+        } catch (e) {
+            error = e.message;
+        }
+    }
+
+    async function selectRoom(room) {
+        selectedRoom = room;
+        messages = [];
+        await loadMessages(room.id);
+        connectWebSocket();
+    }
+
+    async function loadMessages(roomId) {
+        try {
+            const res = await fetch(
+                `http://localhost:8000/rooms/${roomId}/messages`,
+                {
+                    headers: { Authorization: `Bearer ${$token}` },
+                },
+            );
+            if (!res.ok) throw new Error("Failed to load messages");
+            messages = await res.json();
+            scrollToBottom();
+        } catch (e) {
+            error = e.message;
+        }
+    }
+
+    function connectWebSocket() {
+        if (ws) ws.close();
+
+        ws = new WebSocket(`ws://localhost:8000/ws?token=${$token}`);
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            if (
+                msg.type === "message" &&
+                msg.data.room_id === selectedRoom.id
+            ) {
+                // Check for duplicates if we sent via REST and it already returned
+                if (!messages.find((m) => m.id === msg.data.id)) {
+                    messages = [...messages, msg.data];
+                    scrollToBottom();
+                }
+            }
+        };
+
+        ws.onopen = () => {
+            console.log("WebSocket connected");
+            error = "";
+        };
+
+        ws.onerror = (e) => {
+            console.error("WebSocket error:", e);
+        };
+
+        ws.onclose = () => {
+            console.log("WebSocket closed");
+        };
+    }
+
+    async function sendMessage() {
+        if (!newMessage.trim()) return;
+        const content = newMessage;
+        newMessage = "";
+
+        try {
+            // Priority 1: WebSocket
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                try {
+                    ws.send(
+                        JSON.stringify({
+                            room_id: selectedRoom.id,
+                            content: content,
+                        }),
+                    );
+                    return; // Success
+                } catch (e) {
+                    console.warn("WS send failed, falling back to REST", e);
+                }
+            }
+
+            // Priority 2: REST Fallback
+            const res = await fetch("http://localhost:8000/messages/create", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${$token}`,
+                },
+                body: JSON.stringify({
+                    room_id: selectedRoom.id,
+                    content: content,
+                }),
+            });
+
+            if (!res.ok)
+                throw new Error("Failed to send message via REST fallback");
+
+            // Note: Since the backend broadcasts REST messages too,
+            // the WS listener will handle adding it to the list.
+        } catch (e) {
+            error = `Send failed: ${e.message}`;
+            newMessage = content; // restore draft
+        }
+    }
+
+    function scrollToBottom() {
+        setTimeout(() => {
+            const el = document.querySelector(".messages");
+            if (el) el.scrollTop = el.scrollHeight;
+        }, 50);
+    }
+
+    function logout() {
+        token.set(null);
+        user.set(null);
+        if (ws) ws.close();
+    }
+
+    onDestroy(() => {
+        if (ws) ws.close();
+    });
+</script>
+
+<div class="chat-container">
+    {#if !selectedRoom}
+        <div class="room-page">
+            <header>
+                <h1>Rooms</h1>
+                <button class="logout-btn" on:click={logout}>Logout</button>
+            </header>
+
+            {#if error}
+                <p class="error">{error}</p>
+            {/if}
+
+            <div class="room-list">
+                {#each rooms as room}
+                    <button class="room-card" on:click={() => selectRoom(room)}>
+                        <div class="room-info">
+                            <h3># {room.name}</h3>
+                            <p>Click to join</p>
+                        </div>
+                        <div class="arrow">→</div>
+                    </button>
+                {/each}
+                {#if rooms.length === 0}
+                    <p class="empty">
+                        No rooms available. Create one in the backend!
+                    </p>
+                {/if}
+            </div>
+        </div>
+    {:else}
+        <div class="message-page">
+            <header>
+                <button class="back-btn" on:click={() => (selectedRoom = null)}
+                    >←</button
+                >
+                <h2># {selectedRoom.name}</h2>
+                <div class="user-chip">{$user?.username || "User"}</div>
+            </header>
+
+            <div class="messages">
+                {#each messages as msg}
+                    <div
+                        class="message {msg.sender.id === $user?.id
+                            ? 'own'
+                            : ''}"
+                    >
+                        <div class="msg-header">
+                            <span class="sender">{msg.sender.username}</span>
+                            <span class="time"
+                                >{new Date(msg.timestamp).toLocaleTimeString(
+                                    [],
+                                    { hour: "2-digit", minute: "2-digit" },
+                                )}</span
+                            >
+                        </div>
+                        <div class="msg-content">{msg.content}</div>
+                    </div>
+                {/each}
+            </div>
+
+            <form class="input-area" on:submit|preventDefault={sendMessage}>
+                <input
+                    type="text"
+                    bind:value={newMessage}
+                    placeholder="Type a message..."
+                />
+                <button type="submit" disabled={!newMessage.trim()}>Send</button
+                >
+            </form>
+        </div>
+    {/if}
+</div>
+
+<style>
+    .chat-container {
+        height: 90vh;
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        background: rgba(17, 17, 26, 0.9);
+        border-radius: 1.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        overflow: hidden;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+    }
+
+    header {
+        padding: 1.5rem;
+        background: rgba(26, 26, 40, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    h1,
+    h2 {
+        margin: 0;
+        font-size: 1.5rem;
+    }
+
+    .logout-btn,
+    .back-btn {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #e8e8f0;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+        transition: all 0.2s;
+    }
+
+    .logout-btn:hover,
+    .back-btn:hover {
+        background: rgba(255, 101, 132, 0.1);
+        color: #ff6584;
+    }
+
+    .room-list {
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        overflow-y: auto;
+    }
+
+    .room-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 1rem;
+        padding: 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: white;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: left;
+    }
+
+    .room-card:hover {
+        background: rgba(108, 99, 255, 0.1);
+        border-color: rgba(108, 99, 255, 0.3);
+        transform: translateY(-2px);
+    }
+
+    .room-info h3 {
+        margin: 0 0 0.25rem;
+        font-size: 1.1rem;
+    }
+
+    .room-info p {
+        margin: 0;
+        font-size: 0.8rem;
+        color: #6b6b8a;
+    }
+
+    .arrow {
+        font-size: 1.2rem;
+        color: #6c63ff;
+    }
+
+    .message-page {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .message {
+        max-width: 80%;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 0.8rem 1rem;
+        border-radius: 1rem;
+        border-bottom-left-radius: 0;
+        align-self: flex-start;
+    }
+
+    .message.own {
+        align-self: flex-end;
+        background: linear-gradient(
+            135deg,
+            rgba(108, 99, 255, 0.2),
+            rgba(108, 99, 255, 0.1)
+        );
+        border: 1px solid rgba(108, 99, 255, 0.2);
+        border-bottom-left-radius: 1rem;
+        border-bottom-right-radius: 0;
+    }
+
+    .msg-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 0.25rem;
+        font-size: 0.75rem;
+    }
+
+    .sender {
+        font-weight: 700;
+        color: #6c63ff;
+    }
+
+    .time {
+        color: #6b6b8a;
+    }
+
+    .msg-content {
+        word-break: break-word;
+        line-height: 1.4;
+    }
+
+    .input-area {
+        padding: 1.25rem;
+        background: rgba(26, 26, 40, 0.8);
+        display: flex;
+        gap: 0.75rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    input {
+        flex: 1;
+        background: rgba(13, 13, 24, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 0.8rem 1rem;
+        border-radius: 0.75rem;
+        color: white;
+    }
+
+    button[type="submit"] {
+        background: #6c63ff;
+        color: white;
+        border: none;
+        padding: 0 1.5rem;
+        border-radius: 0.75rem;
+        font-weight: 700;
+        cursor: pointer;
+    }
+
+    button[type="submit"]:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .user-chip {
+        background: rgba(67, 232, 176, 0.1);
+        color: #43e8b0;
+        padding: 0.25rem 0.75rem;
+        border-radius: 1rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        border: 1px solid rgba(67, 232, 176, 0.2);
+    }
+</style>
