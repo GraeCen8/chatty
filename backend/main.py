@@ -149,6 +149,15 @@ async def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+@app.get("/users", response_model=List[UserRead])
+async def get_users(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    users = session.exec(select(User)).all()
+    return users
+
+
 #
 # rooms
 #
@@ -284,6 +293,48 @@ async def add_user_to_room(
     session.add(room)
     session.commit()
     return {"ok": True, "user_added": user_to_add.username}
+
+
+@app.post("/rooms/{room_id}/remove-user")
+async def remove_user_from_room(
+    room_id: int,
+    request: AddUserToRoomRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    room = session.get(Room, room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    # Only owner can remove others
+    if room.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the room owner can remove members",
+        )
+
+    user_to_remove = session.exec(
+        select(User).where(User.username == request.username)
+    ).first()
+    if not user_to_remove:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+
+    # Cannot remove owner
+    if user_to_remove.id == room.owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot remove the room owner"
+        )
+
+    if user_to_remove not in room.users:
+        return {"msg": "User not in room"}
+
+    room.users.remove(user_to_remove)
+    session.add(room)
+    session.commit()
+    return {"ok": True, "user_removed": user_to_remove.username}
 
 
 @app.delete("/rooms/{room_id}/leave")

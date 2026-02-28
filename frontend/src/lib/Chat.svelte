@@ -8,6 +8,8 @@
     let newMessage = "";
     let newRoomName = "";
     let addUserUsername = "";
+    let allUsers = [];
+    let roomUsers = [];
     let ws;
     let error = "";
 
@@ -32,7 +34,36 @@
         selectedRoom = room;
         messages = [];
         await loadMessages(room.id);
+        await loadRoomUsers(room.id);
+        await loadAllUsers();
         connectWebSocket();
+    }
+
+    async function loadRoomUsers(roomId) {
+        try {
+            const res = await fetch(
+                `http://localhost:8000/rooms/${roomId}/users`,
+                {
+                    headers: { Authorization: `Bearer ${$token}` },
+                },
+            );
+            if (!res.ok) throw new Error("Failed to load room users");
+            roomUsers = await res.json();
+        } catch (e) {
+            error = e.message;
+        }
+    }
+
+    async function loadAllUsers() {
+        try {
+            const res = await fetch(`http://localhost:8000/users`, {
+                headers: { Authorization: `Bearer ${$token}` },
+            });
+            if (!res.ok) throw new Error("Failed to load users");
+            allUsers = await res.json();
+        } catch (e) {
+            error = e.message;
+        }
     }
 
     async function loadMessages(roomId) {
@@ -157,7 +188,8 @@
         }
     }
 
-    async function deleteRoom(roomId) {
+    async function deleteRoom(roomId, event) {
+        if (event) event.stopPropagation();
         if (!confirm("Are you sure you want to delete this room?")) return;
         try {
             const res = await fetch(`http://localhost:8000/rooms/${roomId}`, {
@@ -168,7 +200,9 @@
                 const data = await res.json();
                 throw new Error(data.detail || "Failed to delete room");
             }
-            leaveRoom();
+            if (selectedRoom && selectedRoom.id === roomId) {
+                leaveRoom();
+            }
             await loadRooms();
         } catch (e) {
             error = e.message;
@@ -176,7 +210,7 @@
     }
 
     async function addUserToRoom() {
-        if (!addUserUsername.trim()) return;
+        if (!addUserUsername) return;
         try {
             const res = await fetch(
                 `http://localhost:8000/rooms/${selectedRoom.id}/add-user`,
@@ -193,8 +227,32 @@
                 const data = await res.json();
                 throw new Error(data.detail || "Failed to add user");
             }
-            alert(`User ${addUserUsername} added!`);
+            await loadRoomUsers(selectedRoom.id);
             addUserUsername = "";
+        } catch (e) {
+            error = e.message;
+        }
+    }
+
+    async function removeUserFromRoom(username) {
+        if (!confirm(`Are you sure you want to remove ${username}?`)) return;
+        try {
+            const res = await fetch(
+                `http://localhost:8000/rooms/${selectedRoom.id}/remove-user`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${$token}`,
+                    },
+                    body: JSON.stringify({ username }),
+                },
+            );
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.detail || "Failed to remove user");
+            }
+            await loadRoomUsers(selectedRoom.id);
         } catch (e) {
             error = e.message;
         }
@@ -253,13 +311,27 @@
 
             <div class="room-list">
                 {#each rooms as room}
-                    <button class="room-card" on:click={() => selectRoom(room)}>
-                        <div class="room-info">
-                            <h3># {room.name}</h3>
-                            <p>Click to join</p>
-                        </div>
-                        <div class="arrow">→</div>
-                    </button>
+                    <div class="room-card-wrapper">
+                        <button
+                            class="room-card"
+                            on:click={() => selectRoom(room)}
+                        >
+                            <div class="room-info">
+                                <h3># {room.name}</h3>
+                                <p>Click to join</p>
+                            </div>
+                            <div class="arrow">→</div>
+                        </button>
+                        {#if room.owner_id === $user?.id}
+                            <button
+                                class="delete-room-btn"
+                                on:click={(e) => deleteRoom(room.id, e)}
+                                title="Delete Room"
+                            >
+                                ✕
+                            </button>
+                        {/if}
+                    </div>
                 {/each}
                 {#if rooms.length === 0}
                     <p class="empty">No rooms available. Create one above!</p>
@@ -270,48 +342,79 @@
         <div class="message-page">
             <header>
                 <button class="back-btn" on:click={leaveRoom}>←</button>
-                <h2># {selectedRoom.name}</h2>
+                <div class="title-section">
+                    <h2># {selectedRoom.name}</h2>
+                    <p class="member-count">{roomUsers.length} members</p>
+                </div>
                 <div class="header-actions">
                     <div class="add-user-form">
-                        <input
-                            type="text"
-                            bind:value={addUserUsername}
-                            placeholder="Username"
-                        />
-                        <button on:click={addUserToRoom}>Add Member</button>
-                    </div>
-                    {#if selectedRoom.owner_id === $user?.id}
+                        <select bind:value={addUserUsername}>
+                            <option value="">Add Member...</option>
+                            {#each allUsers.filter((u) => !roomUsers.find((ru) => ru.id === u.id)) as u}
+                                <option value={u.username}>{u.username}</option>
+                            {/each}
+                        </select>
                         <button
-                            class="delete-btn"
-                            on:click={() => deleteRoom(selectedRoom.id)}
-                            title="Delete Room"
+                            on:click={addUserToRoom}
+                            disabled={!addUserUsername}>Add</button
                         >
-                            🗑️
-                        </button>
-                    {/if}
+                    </div>
                     <div class="user-chip">{$user?.username || "User"}</div>
                 </div>
             </header>
 
-            <div class="messages">
-                {#each messages as msg}
-                    <div
-                        class="message {msg.sender.id === $user?.id
-                            ? 'own'
-                            : ''}"
-                    >
-                        <div class="msg-header">
-                            <span class="sender">{msg.sender.username}</span>
-                            <span class="time"
-                                >{new Date(msg.timestamp).toLocaleTimeString(
-                                    [],
-                                    { hour: "2-digit", minute: "2-digit" },
-                                )}</span
-                            >
+            <div class="chat-layout">
+                <div class="messages">
+                    {#each messages as msg}
+                        <div
+                            class="message {msg.sender.id === $user?.id
+                                ? 'own'
+                                : ''}"
+                        >
+                            <div class="msg-header">
+                                <span class="sender">{msg.sender.username}</span
+                                >
+                                <span class="time"
+                                    >{new Date(
+                                        msg.timestamp,
+                                    ).toLocaleTimeString([], {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                    })}</span
+                                >
+                            </div>
+                            <div class="msg-content">{msg.content}</div>
                         </div>
-                        <div class="msg-content">{msg.content}</div>
+                    {/each}
+                </div>
+
+                <div class="sidebar">
+                    <h3>Members</h3>
+                    <div class="member-list">
+                        {#each roomUsers as member}
+                            <div class="member-item">
+                                <span
+                                    class={member.id === selectedRoom.owner_id
+                                        ? "owner"
+                                        : ""}
+                                >
+                                    {member.username}
+                                    {#if member.id === selectedRoom.owner_id}
+                                        <small>(owner)</small>
+                                    {/if}
+                                </span>
+                                {#if selectedRoom.owner_id === $user?.id && member.id !== $user?.id}
+                                    <button
+                                        class="remove-btn"
+                                        on:click={() =>
+                                            removeUserFromRoom(member.username)}
+                                        title="Remove Member">✕</button
+                                    >
+                                {/if}
+                            </div>
+                        {/each}
                     </div>
-                {/each}
+                </div>
             </div>
 
             <form class="input-area" on:submit|preventDefault={sendMessage}>
@@ -556,16 +659,6 @@
         gap: 0.25rem;
     }
 
-    .add-user-form input {
-        width: 100px;
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 0.25rem 0.5rem;
-        border-radius: 0.4rem;
-        color: white;
-        font-size: 0.8rem;
-    }
-
     .add-user-form button {
         background: rgba(108, 99, 255, 0.2);
         color: #6c63ff;
@@ -576,16 +669,125 @@
         cursor: pointer;
     }
 
-    .delete-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 0.5rem;
-        border-radius: 0.5rem;
-        transition: background 0.2s;
+    .room-card-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
     }
 
-    .delete-btn:hover {
-        background: rgba(255, 0, 0, 0.1);
+    .room-card {
+        flex: 1;
+    }
+
+    .delete-room-btn {
+        position: absolute;
+        right: 1.5rem;
+        background: rgba(255, 101, 132, 0.1);
+        color: #ff6584;
+        border: 1px solid rgba(255, 101, 132, 0.2);
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s;
+        opacity: 0;
+    }
+
+    .room-card-wrapper:hover .delete-room-btn {
+        opacity: 1;
+    }
+
+    .delete-room-btn:hover {
+        background: #ff6584;
+        color: white;
+        transform: scale(1.1);
+    }
+
+    .title-section {
+        flex: 1;
+        margin-left: 1rem;
+    }
+
+    .member-count {
+        margin: 0;
+        font-size: 0.8rem;
+        color: #6b6b8a;
+    }
+
+    .add-user-form select {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.4rem;
+        color: white;
+        font-size: 0.8rem;
+        outline: none;
+    }
+
+    .add-user-form select option {
+        background: #1a1a28;
+    }
+
+    .chat-layout {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+    }
+
+    .sidebar {
+        width: 200px;
+        background: rgba(0, 0, 0, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.05);
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .sidebar h3 {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #6b6b8a;
+        text-transform: uppercase;
+        letter-spacing: 0.05rem;
+    }
+
+    .member-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .member-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.9rem;
+        color: #e8e8f0;
+    }
+
+    .owner {
+        color: #ffb86c;
+    }
+
+    .remove-btn {
+        background: none;
+        border: none;
+        color: #6b6b8a;
+        cursor: pointer;
+        font-size: 0.75rem;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+
+    .member-item:hover .remove-btn {
+        opacity: 1;
+    }
+
+    .remove-btn:hover {
+        color: #ff6584;
     }
 </style>

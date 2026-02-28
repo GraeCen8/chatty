@@ -1,59 +1,62 @@
 <script>
-    import { token, user } from '../stores';
+    import { token, user } from "../stores";
     let isLogin = true;
-    let username = '';
-    let email = '';
-    let password = '';
-    let error = '';
+    let username = "";
+    let email = "";
+    let password = "";
+    let error = "";
     let loading = false;
 
     async function handleSubmit() {
-        error = '';
+        error = "";
         loading = true;
-        const endpoint = isLogin ? '/users/login' : '/users/create';
-        
+        const endpoint = isLogin ? "/users/login" : "/users/create";
+
         try {
             let body;
+            /** @type {Record<string, string>} */
             let headers = {};
-            
+
             if (isLogin) {
                 // OAuth2PasswordRequestForm expects form data
                 body = new URLSearchParams();
-                body.append('username', username);
-                body.append('password', password);
-                headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                body.append("username", username);
+                body.append("password", password);
+                headers["Content-Type"] = "application/x-www-form-urlencoded";
             } else {
                 body = JSON.stringify({ username, email, password });
-                headers['Content-Type'] = 'application/json';
+                headers["Content-Type"] = "application/json";
             }
 
             const response = await fetch(`http://localhost:8000${endpoint}`, {
-                method: 'POST',
+                method: "POST",
                 headers,
-                body
+                body,
             });
 
             const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.detail || 'Something went wrong');
+                throw new Error(data.detail || "Something went wrong");
             }
 
             if (isLogin) {
                 const accessToken = data.access_token;
                 // Fetch user info
-                const userRes = await fetch('http://localhost:8000/users/me', {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                const userRes = await fetch("http://localhost:8000/users/me", {
+                    headers: { Authorization: `Bearer ${accessToken}` },
                 });
                 const userData = await userRes.json();
                 if (!userRes.ok) {
-                    throw new Error(userData.detail || 'Failed to load user profile');
+                    throw new Error(
+                        userData.detail || "Failed to load user profile",
+                    );
                 }
                 token.set(accessToken);
                 user.set(userData);
             } else {
                 isLogin = true;
-                error = 'Account created! Please login.';
+                error = "Account created! Please login.";
             }
         } catch (e) {
             error = e.message;
@@ -65,25 +68,45 @@
 
 <div class="auth-container">
     <div class="auth-card">
-        <h2>{isLogin ? 'Login' : 'Register'}</h2>
-        <p class="subtitle">{isLogin ? 'Welcome back to Chatty' : 'Join the conversation today'}</p>
-        
+        <h2>{isLogin ? "Login" : "Register"}</h2>
+        <p class="subtitle">
+            {isLogin ? "Welcome back to Chatty" : "Join the conversation today"}
+        </p>
+
         <form on:submit|preventDefault={handleSubmit}>
             <div class="input-group">
                 <label for="username">Username</label>
-                <input type="text" id="username" bind:value={username} required placeholder="Choose a username" />
+                <input
+                    type="text"
+                    id="username"
+                    bind:value={username}
+                    required
+                    placeholder="Choose a username"
+                />
             </div>
 
             {#if !isLogin}
                 <div class="input-group">
                     <label for="email">Email</label>
-                    <input type="email" id="email" bind:value={email} required placeholder="your@email.com" />
+                    <input
+                        type="email"
+                        id="email"
+                        bind:value={email}
+                        required
+                        placeholder="your@email.com"
+                    />
                 </div>
             {/if}
 
             <div class="input-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" bind:value={password} required placeholder="••••••••" />
+                <input
+                    type="password"
+                    id="password"
+                    bind:value={password}
+                    required
+                    placeholder="••••••••"
+                />
             </div>
 
             {#if error}
@@ -91,13 +114,19 @@
             {/if}
 
             <button type="submit" disabled={loading}>
-                {loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Create Account')}
+                {loading
+                    ? "Processing..."
+                    : isLogin
+                      ? "Sign In"
+                      : "Create Account"}
             </button>
         </form>
 
         <div class="toggle">
-            <button class="link-btn" on:click={() => isLogin = !isLogin}>
-                {isLogin ? "Don't have an account? Register" : "Already have an account? Login"}
+            <button class="link-btn" on:click={() => (isLogin = !isLogin)}>
+                {isLogin
+                    ? "Don't have an account? Register"
+                    : "Already have an account? Login"}
             </button>
         </div>
     </div>
@@ -128,6 +157,7 @@
         font-weight: 700;
         background: linear-gradient(135deg, #6c63ff, #ff6584);
         -webkit-background-clip: text;
+        background-clip: text;
         -webkit-text-fill-color: transparent;
     }
 
@@ -181,7 +211,9 @@
         border-radius: 0.75rem;
         font-weight: 700;
         cursor: pointer;
-        transition: transform 0.2s, opacity 0.2s;
+        transition:
+            transform 0.2s,
+            opacity 0.2s;
         margin-top: 1rem;
     }
 
