@@ -18,7 +18,6 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_tables()
     # Create a default room if none exists
     from database import get_session
 
@@ -74,7 +73,9 @@ class UserCreate(BaseModel):
 @app.post("/users/create", response_model=UserRead)
 async def create_user(user: UserCreate, session: Session = Depends(get_session)):
     existing = session.exec(
-        select(User).where((User.username == user.username) | (User.email == user.email))
+        select(User).where(
+            (User.username == user.username) | (User.email == user.email)
+        )
     ).first()
     if existing:
         raise HTTPException(
@@ -302,23 +303,18 @@ async def create_message(
     session.refresh(db_message)
 
     # Broadcast via WebSocket as well
-    await manager.broadcast(
-        {"type": "message", "data": format_message(db_message)}
-    )
+    await manager.broadcast({"type": "message", "data": format_message(db_message)})
 
     return db_message
 
 
 @app.websocket("/ws")
-async def handle_messages(
-    websocket: WebSocket, 
-    token: Optional[str] = None
-):
+async def handle_messages(websocket: WebSocket, token: Optional[str] = None):
     # Auth for WebSocket (usually passed via query param)
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-        
+
     payload = decode_token(token)
     if not payload or not payload.get("sub"):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -326,9 +322,10 @@ async def handle_messages(
 
     # Use a fresh session for the WS loop
     from database import get_session
+
     session_gen = get_session()
     session = next(session_gen)
-    
+
     try:
         username = payload.get("sub")
         user = session.exec(select(User).where(User.username == username)).first()
@@ -340,11 +337,11 @@ async def handle_messages(
         try:
             while True:
                 data = await websocket.receive_json()
-                
+
                 # Expected format: {"room_id": int, "content": str}
                 room_id = data.get("room_id")
                 content = data.get("content")
-                
+
                 if room_id and content:
                     room = session.get(Room, room_id)
                     if room:
@@ -352,12 +349,11 @@ async def handle_messages(
                         session.add(db_message)
                         session.commit()
                         session.refresh(db_message)
-                        
+
                         # Broadcast message to everyone
-                        await manager.broadcast({
-                            "type": "message", 
-                            "data": format_message(db_message)
-                        })
+                        await manager.broadcast(
+                            {"type": "message", "data": format_message(db_message)}
+                        )
         except WebSocketDisconnect:
             manager.disconnect(websocket)
     finally:
