@@ -77,6 +77,11 @@ class UserCreate(BaseModel):
 
 @app.post("/users/create", response_model=UserRead)
 async def create_user(user: UserCreate, session: Session = Depends(get_session)):
+    if len(user.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters long",
+        )
     existing = session.exec(
         select(User).where(
             (User.username == user.username) | (User.email == user.email)
@@ -90,6 +95,13 @@ async def create_user(user: UserCreate, session: Session = Depends(get_session))
     hashed_pw = hash_password(user.password)
     db_user = User(username=user.username, password=hashed_pw, email=user.email)
     session.add(db_user)
+    
+    # Add to General room if it exists
+    general = session.exec(select(Room).where(Room.name == "General")).first()
+    if general:
+        general.users.append(db_user)
+        session.add(general)
+    
     session.commit()
     session.refresh(db_user)
     return db_user
@@ -204,6 +216,10 @@ async def delete_room(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the room owner can delete it",
         )
+    
+    # Broadcast room deletion before deleting from DB
+    await manager.broadcast_room(room_id, {"type": "room_deleted", "room_id": room_id})
+    
     session.delete(room)
     session.commit()
     return {"ok": True}
@@ -220,6 +236,10 @@ async def get_room(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
+    if not any(u.id == current_user.id for u in room.users):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this room"
+        )
     return room
 
 
@@ -228,30 +248,16 @@ async def get_rooms(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    rooms = session.exec(select(Room).order_by(Room.name)).all()
+    # Only return rooms where the user is a member
+    rooms = session.exec(
+        select(Room)
+        .join(Room.users)
+        .where(User.id == current_user.id)
+        .order_by(Room.name)
+    ).all()
     return rooms
 
 
-@app.post("/rooms/{room_id}/join")
-async def join_room(
-    room_id: int,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    room = session.get(Room, room_id)
-    if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
-        )
-    # Check if user already in room's user list
-    is_member = any(u.id == current_user.id for u in room.users)
-    if is_member:
-        return room
-    room.users.append(current_user)
-    session.add(room)
-    session.commit()
-    session.refresh(room)
-    return room
 
 
 class AddUserToRoomRequest(BaseModel):
@@ -334,6 +340,12 @@ async def remove_user_from_room(
     room.users.remove(user_to_remove)
     session.add(room)
     session.commit()
+
+    # Broadcast removal
+    await manager.broadcast_room(
+        room_id, {"type": "user_removed", "username": user_to_remove.username}
+    )
+
     return {"ok": True, "user_removed": user_to_remove.username}
 
 
@@ -368,6 +380,10 @@ async def get_room_users(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
         )
+    if not any(u.id == current_user.id for u in room.users):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this room"
+        )
     return room.users
 
 
@@ -401,6 +417,10 @@ async def create_message(
     if not room:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    if not any(u.id == current_user.id for u in room.users):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this room"
         )
     db_message = Message(content=message.content, room=room, sender=current_user)
     session.add(db_message)
@@ -439,6 +459,12 @@ async def handle_messages(
         username = payload.get("sub")
         user = session.exec(select(User).where(User.username == username)).first()
         if not user:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        # Double check membership for WebSocket
+        room = session.get(Room, room_id)
+        if not room or not any(u.id == user.id for u in room.users):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
@@ -488,9 +514,17 @@ async def delete_message(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only delete your own messages",
         )
+    
+    room_id = message.room_id
+    deleted_id = message.id
+    
     session.delete(message)
     session.commit()
-    return {"ok": True, "deleted_id": message_id}
+    
+    # Broadcast deletion
+    await manager.broadcast_room(room_id, {"type": "message_deleted", "id": deleted_id})
+    
+    return {"ok": True, "deleted_id": deleted_id}
 
 
 @app.get("/rooms/{room_id}/messages", response_model=List[MessageRead])
@@ -503,6 +537,10 @@ async def get_room_messages(
     if not room:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Room not found"
+        )
+    if not any(u.id == current_user.id for u in room.users):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this room"
         )
     return room.messages
 

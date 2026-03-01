@@ -92,14 +92,29 @@
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
             if (!selectedRoom) return;
-            if (
-                msg.type === "message" &&
-                msg.data.room_id === selectedRoom.id
-            ) {
-                // Check for duplicates if we sent via REST and it already returned
-                if (!messages.find((m) => m.id === msg.data.id)) {
-                    messages = [...messages, msg.data];
-                    scrollToBottom();
+
+            if (msg.type === "message") {
+                if (msg.data.room_id === selectedRoom.id) {
+                    if (!messages.find((m) => m.id === msg.data.id)) {
+                        messages = [...messages, msg.data];
+                        scrollToBottom();
+                    }
+                }
+            } else if (msg.type === "message_deleted") {
+                messages = messages.filter((m) => m.id !== msg.id);
+            } else if (msg.type === "room_deleted") {
+                if (selectedRoom.id === msg.room_id) {
+                    alert("This room has been deleted.");
+                    leaveRoom();
+                    loadRooms();
+                }
+            } else if (msg.type === "user_removed") {
+                if (msg.username === $user.username) {
+                    alert("You have been removed from this room.");
+                    leaveRoom();
+                    loadRooms();
+                } else {
+                    loadRoomUsers(selectedRoom.id);
                 }
             }
         };
@@ -258,6 +273,24 @@
         }
     }
 
+    async function deleteMessage(messageId) {
+        try {
+            const res = await fetch(
+                `http://localhost:8000/messages/${messageId}`,
+                {
+                    method: "DELETE",
+                    headers: { Authorization: `Bearer ${$token}` },
+                },
+            );
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.detail || "Failed to delete message");
+            }
+        } catch (e) {
+            error = e.message;
+        }
+    }
+
     function scrollToBottom() {
         setTimeout(() => {
             const el = document.querySelector(".messages");
@@ -318,7 +351,7 @@
                         >
                             <div class="room-info">
                                 <h3># {room.name}</h3>
-                                <p>Click to join</p>
+                                <p>Open chat</p>
                             </div>
                             <div class="arrow">→</div>
                         </button>
@@ -374,14 +407,24 @@
                             <div class="msg-header">
                                 <span class="sender">{msg.sender.username}</span
                                 >
-                                <span class="time"
-                                    >{new Date(
-                                        msg.timestamp,
-                                    ).toLocaleTimeString([], {
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                    })}</span
-                                >
+                                <div class="msg-meta">
+                                    <span class="time"
+                                        >{new Date(
+                                            msg.timestamp,
+                                        ).toLocaleTimeString([], {
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                        })}</span
+                                    >
+                                    {#if msg.sender.id === $user?.id}
+                                        <button
+                                            class="msg-delete-btn"
+                                            on:click={() =>
+                                                deleteMessage(msg.id)}
+                                            title="Delete Message">✕</button
+                                        >
+                                    {/if}
+                                </div>
                             </div>
                             <div class="msg-content">{msg.content}</div>
                         </div>
@@ -821,6 +864,31 @@
     }
 
     .remove-btn:hover {
+        color: #ff6584;
+    }
+
+    .msg-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .msg-delete-btn {
+        background: none;
+        border: none;
+        color: #6b6b8a;
+        cursor: pointer;
+        font-size: 0.7rem;
+        padding: 0;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+
+    .message:hover .msg-delete-btn {
+        opacity: 1;
+    }
+
+    .msg-delete-btn:hover {
         color: #ff6584;
     }
 </style>
