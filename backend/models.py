@@ -28,10 +28,12 @@ class User(SQLModel, table=True):
 class Room(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(default="", max_length=50, unique=True, index=True)
+    owner_id: Optional[int] = Field(default=None, foreign_key="user.id")
 
     users: List["User"] = Relationship(
         back_populates="rooms", link_model=UserRoomLink
     )
+    owner: Optional["User"] = Relationship()
     messages: List["Message"] = Relationship(
         back_populates="room", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
@@ -62,6 +64,7 @@ class UserRead(BaseModel):
 class RoomRead(BaseModel):
     id: int
     name: str
+    owner_id: Optional[int] = None
 
     class Config:
         from_attributes = True
